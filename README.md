@@ -2,7 +2,7 @@
 
 An autonomous **writer → reviewer agent loop** that drafts LinkedIn posts, critiques its own work, and keeps rewriting until the post is genuinely publish-ready — or gives up after 5 honest attempts.
 
-Built with **LangGraph**, powered by **Mistral** (writer) + **Groq / gpt-oss-120b** (reviewer), with live web search via **Tavily**. Ships as both a **Streamlit app** and a **CLI script**.
+Built with **LangGraph**, powered by **NVIDIA NIM / Nemotron 3 Ultra** (writer) + **OpenRouter** (reviewer), with live web search via **Tavily**. Ships as both a **Streamlit app** and a **CLI script**.
 
 
 🔗 **Live Demo:** [linkedin-post-generator-agent-pranjal-003.streamlit.app](https://linkedin-post-generator-agent-pranjal-003.streamlit.app/)
@@ -35,8 +35,8 @@ The whole thing is a small state graph:
          END
 ```
 
-1. **Writer** (`mistral-small-2506`) drafts a post from the topic. If the topic needs current facts or stats, it calls the **Tavily search tool** before writing.
-2. **Reviewer** (`openai/gpt-oss-120b` via Groq) grades the draft against 7 strict criteria and returns `APPROVED` or `REJECTED` with feedback.
+1. **Writer** (`nvidia/nemotron-3-ultra-550b-a55b` via NVIDIA NIM) drafts a post from the topic. If the topic needs current facts or stats, it calls the **Tavily search tool** before writing.
+2. **Reviewer** (`nvidia/nemotron-3-ultra-550b-a55b:free` via OpenRouter) grades the draft against 7 strict criteria and returns `APPROVED` or `REJECTED` with feedback.
 3. If rejected, the **feedback is fed straight back to the writer**, which rewrites the post addressing every point.
 4. This loop repeats until the post is approved **or** 5 attempts are used up, whichever comes first.
 
@@ -57,7 +57,7 @@ The whole thing is a small state graph:
 
 - **Self-correcting agent loop** — no human in the loop needed, the model reviews itself
 - **Live web search** grounding for topics that need current data (Tavily)
-- **Two-model setup** — a creative writer model and a separate, strict reviewer model, so the same LLM isn't grading its own homework
+- **Separate writer and reviewer agents** — the writer and reviewer run as independent LLM calls on different providers (NVIDIA NIM and OpenRouter), each with its own prompt, so the reviewer judges every draft strictly against its own criteria
 - **Hard attempt cap (5)** to avoid infinite loops and runaway API costs
 - **Two interfaces**:
   - `iterate_app.py` — a polished Streamlit UI with post history, approval badges, and one-click `.txt` download
@@ -70,8 +70,8 @@ The whole thing is a small state graph:
 | Layer | Tool |
 |---|---|
 | Orchestration | [LangGraph](https://github.com/langchain-ai/langgraph) |
-| Writer LLM | Mistral (`mistral-small-2506`) via `langchain-mistralai` |
-| Reviewer LLM | Groq (`openai/gpt-oss-120b`) via `langchain-groq` |
+| Writer LLM | NVIDIA NIM (`nvidia/nemotron-3-ultra-550b-a55b`) via `langchain-openai` (OpenAI-compatible endpoint) |
+| Reviewer LLM | OpenRouter (`nvidia/nemotron-3-ultra-550b-a55b:free`) via `langchain-openai` |
 | Web search | [Tavily](https://tavily.com/) via `langchain-tavily` |
 | UI | [Streamlit](https://streamlit.io/) |
 | Env management | `python-dotenv` |
@@ -87,7 +87,7 @@ cd <your-repo-folder>
 python -m venv venv
 source venv/bin/activate      # on Windows: venv\Scripts\activate
 
-pip install streamlit langgraph langchain-groq langchain-tavily langchain-mistralai python-dotenv
+pip install streamlit langgraph langchain-openai langchain-tavily python-dotenv
 ```
 
 ### Environment variables
@@ -95,12 +95,12 @@ pip install streamlit langgraph langchain-groq langchain-tavily langchain-mistra
 Create a `.env` file in the project root:
 
 ```env
-MISTRAL_API_KEY=your_mistral_api_key
-GROQ_API_KEY=your_groq_api_key
+NVIDIA_API_KEY=your_nvidia_api_key
+OPENROUTER_API_KEY=your_openrouter_api_key
 TAVILY_API_KEY=your_tavily_api_key
 ```
 
-> Get keys from [Mistral](https://console.mistral.ai/), [Groq](https://console.groq.com/), and [Tavily](https://app.tavily.com/).
+> Get keys from [NVIDIA Build](https://build.nvidia.com/), [OpenRouter](https://openrouter.ai/settings/keys), and [Tavily](https://app.tavily.com/).
 
 ---
 
