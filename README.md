@@ -2,7 +2,7 @@
 
 An autonomous **writer → reviewer agent loop** that drafts LinkedIn posts, critiques its own work, and keeps rewriting until the post is genuinely publish-ready — or gives up after 5 honest attempts.
 
-Built with **LangGraph**, powered by **NVIDIA NIM / Nemotron 3 Ultra** (writer) + **OpenRouter** (reviewer), with live web search via **Tavily**. Ships as both a **Streamlit app** and a **CLI script**.
+Built with **LangGraph**, powered by **NVIDIA NIM / GPT-OSS 20B** (writer) + **Qwen 3.8 via OpenRouter** (reviewer), with live web search via **Tavily**. Ships as both a **Streamlit app** and a **CLI script**.
 
 
 🔗 **Live Demo:** [linkedin-post-generator-agent-pranjal-003.streamlit.app](https://linkedin-post-generator-agent-pranjal-003.streamlit.app/)
@@ -35,8 +35,8 @@ The whole thing is a small state graph:
          END
 ```
 
-1. **Writer** (`nvidia/nemotron-3-ultra-550b-a55b` via NVIDIA NIM) drafts a post from the topic. If the topic needs current facts or stats, it calls the **Tavily search tool** before writing.
-2. **Reviewer** (`nvidia/nemotron-3-ultra-550b-a55b:free` via OpenRouter) grades the draft against 7 strict criteria and returns `APPROVED` or `REJECTED` with feedback.
+1. **Writer** (`openai/gpt-oss-20b` via NVIDIA NIM) drafts a post from the topic. If the topic needs current facts or stats, it calls the **Tavily search tool** before writing.
+2. **Reviewer** (`qwen/qwen3.8-27b:free` via OpenRouter) grades the draft against 7 strict criteria and returns `APPROVED` or `REJECTED` with feedback.
 3. If rejected, the **feedback is fed straight back to the writer**, which rewrites the post addressing every point.
 4. This loop repeats until the post is approved **or** 5 attempts are used up, whichever comes first.
 
@@ -57,7 +57,7 @@ The whole thing is a small state graph:
 
 - **Self-correcting agent loop** — no human in the loop needed, the model reviews itself
 - **Live web search** grounding for topics that need current data (Tavily)
-- **Separate writer and reviewer agents** — the writer and reviewer run as independent LLM calls on different providers (NVIDIA NIM and OpenRouter), each with its own prompt, so the reviewer judges every draft strictly against its own criteria
+- **Two-model setup** — a creative writer model (GPT-OSS 20B) and a separate, strict reviewer model (Qwen), so the same LLM isn't grading its own homework
 - **Hard attempt cap (5)** to avoid infinite loops and runaway API costs
 - **Two interfaces**:
   - `iterate_app.py` — a polished Streamlit UI with post history, approval badges, and one-click `.txt` download
@@ -70,8 +70,8 @@ The whole thing is a small state graph:
 | Layer | Tool |
 |---|---|
 | Orchestration | [LangGraph](https://github.com/langchain-ai/langgraph) |
-| Writer LLM | NVIDIA NIM (`nvidia/nemotron-3-ultra-550b-a55b`) via `langchain-openai` (OpenAI-compatible endpoint) |
-| Reviewer LLM | Qwen (qwen/qwen3.8-27b:free) via OpenRouter and langchain-openai |
+| Writer LLM | NVIDIA NIM (`openai/gpt-oss-20b`) via `langchain-openai` (OpenAI-compatible endpoint) |
+| Reviewer LLM | Qwen (`qwen/qwen3.8-27b:free`) via OpenRouter and `langchain-openai` |
 | Web search | [Tavily](https://tavily.com/) via `langchain-tavily` |
 | UI | [Streamlit](https://streamlit.io/) |
 | Env management | `python-dotenv` |
