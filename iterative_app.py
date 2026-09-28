@@ -11,6 +11,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ----------------------------
+# Model config (sab free)
+# ----------------------------
+# Writer  -> NVIDIA NIM par gpt-oss-20b (open-weight model, free API key)
+# Reviewer -> Google Gemini Flash-Lite (AI Studio free tier)
+WRITER_MODEL = os.getenv("WRITER_MODEL", "openai/gpt-oss-20b")
+WRITER_BASE_URL = "https://integrate.api.nvidia.com/v1"
+
+REVIEWER_MODEL = os.getenv("REVIEWER_MODEL", "gemini-3.5-flash-lite")  # exact ID AI Studio me check kar lena
+REVIEWER_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+MAX_ATTEMPTS = 5
+
+# ----------------------------
 # Page config
 # ----------------------------
 st.set_page_config(
@@ -19,23 +32,56 @@ st.set_page_config(
     layout="centered",
 )
 
+
 # ----------------------------
-# Step 1 - Tools & LLMs (cached so they load only once)
+# Step 1 - Tools & LLMs (cached, sirf ek baar load hote hain)
 # ----------------------------
 @st.cache_resource(show_spinner=False)
 def load_resources():
-    search_tool = TavilySearch(max_result=3)
+    search_tool = TavilySearch(max_results=3)
     tools = [search_tool]
 
-    writer_llm = ChatOpenAI(model="openai/gpt-oss-20b", base_url="https://integrate.api.nvidia.com/v1", api_key=os.getenv("NVIDIA_API_KEY"), temperature=0.7, timeout=30)
+    writer_llm = ChatOpenAI(
+        model=WRITER_MODEL,
+        base_url=WRITER_BASE_URL,
+        api_key=os.getenv("NVIDIA_API_KEY"),
+        temperature=0.7,
+        timeout=60,
+        max_retries=3,
+    )
     writer_llm_with_tools = writer_llm.bind_tools(tools)
 
-    reviewer_llm = ChatOpenAI(model="qwen/qwen3.8-27b:free", base_url="https://openrouter.ai/api/v1", api_key=os.getenv("OPENROUTER_API_KEY"), temperature=0.1, timeout=30)
+    reviewer_llm = ChatOpenAI(
+        model=REVIEWER_MODEL,
+        base_url=REVIEWER_BASE_URL,
+        api_key=os.getenv("GEMINI_API_KEY"),
+        temperature=0.1,
+        timeout=60,
+        max_retries=3,  # free tier me 429 aaye to retry
+    )
 
     return tools, writer_llm_with_tools, reviewer_llm
 
 
 tools, writer_llm_with_tools, reviewer_llm = load_resources()
+
+
+# ----------------------------
+# Helper
+# ----------------------------
+def to_text(content) -> str:
+    """Kuch models content ko list of blocks me dete hain, use plain string bana do."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+        return "".join(parts)
+    return str(content)
 
 
 # ----------------------------
@@ -53,7 +99,7 @@ class State(TypedDict):
 # ----------------------------
 # Step 3 - Nodes
 # ----------------------------
-writer_system_prompt = (
+WRITER_SYSTEM_PROMPT = (
     "You are an expert LinkedIn content writer. Your job is to write "
     "engaging, professional LinkedIn posts about the given topic. "
     "If the topic requires up-to-date information, statistics, or "
@@ -62,49 +108,51 @@ writer_system_prompt = (
     "previous draft, carefully address every point in the new draft. "
     "Rules for good LinkedIn posts: strong hook in the first line, "
     "1 clear takeaway, easy to skim (short paragraphs), around "
-    "150–200 words, ends with a question or call-to-action to invite "
-    "engagement. Do not use hashtags."
+    "150-200 words, ends with a question or call-to-action to invite "
+    "engagement. Do not use hashtags. "
+    "Output ONLY the final post text, with no preamble or explanation."
 )
 
 
 def writer_node(state: State) -> dict:
-    """Writes (or rewrites) the LinkedIn post. Can call Tavily to search first."""
-    # coming back from a tool call: continue the SAME attempt using the search results
-    if state['messages'] and getattr(state['messages'][-1], 'type', '') == 'tool':
-        response = writer_llm_with_tools.invoke([("system", writer_system_prompt)] + state['messages'])
+    """Post likhta (ya dobara likhta) hai. Zarurat ho to Tavily se search karta hai."""
+    # Tool call se wapas aaye: same attempt continue karo
+    if state["messages"] and getattr(state["messages"][-1], "type", "") == "tool":
+        response = writer_llm_with_tools.invoke(
+            [("system", WRITER_SYSTEM_PROMPT)] + state["messages"]
+        )
         return {"messages": [response]}
 
     attempt = state.get("attempt", 0) + 1
-    topic = state['topic']
-    previous_feedback = state['review_feedback']
+    topic = state["topic"]
+    previous_feedback = state["review_feedback"]
 
     if attempt == 1:
         user_message = (
-            f"Write a LinkedIn post on this {topic}"
-            f"if you need current info search the web first"
+            f'Write a LinkedIn post about this topic: "{topic}". '
+            "If you need current info, search the web first."
         )
     else:
         user_message = (
-            f"your previous draft on '{topic}' was rejected"
-            f"Here is the reviewer's feedback \n\n {previous_feedback}\n\n"
-            f"Write a new ,improved that fixes every issue mentioned"
-            f"do not repeat the same mistake"
+            f'Your previous draft on "{topic}" was rejected.\n\n'
+            f"Reviewer feedback:\n{previous_feedback}\n\n"
+            "Write a new, improved post that fixes every issue mentioned. "
+            "Do not repeat the same mistakes."
         )
-    messages = [("system", writer_system_prompt), ("human", user_message)]
+
+    messages = [("system", WRITER_SYSTEM_PROMPT), ("human", user_message)]
     response = writer_llm_with_tools.invoke(messages)
 
-    return {"messages": [("human", user_message), response],
-            "attempt": attempt}
+    return {"messages": [("human", user_message), response], "attempt": attempt}
 
 
 tool_node = ToolNode(tools)
 
 
 def extract_draft_node(state: State) -> dict:
-    """After the writer finishes tool calls, pulls the final text out as the draft."""
-    last_message = state['messages'][-1]
-    draft = last_message.content
-    return {"draft": draft}
+    """Writer ka final text draft ke roop me nikalta hai."""
+    last_message = state["messages"][-1]
+    return {"draft": to_text(last_message.content).strip()}
 
 
 REVIEWER_SYSTEM_PROMPT = (
@@ -112,7 +160,7 @@ REVIEWER_SYSTEM_PROMPT = (
     "post is publish-ready. Evaluate against these criteria:\n"
     "1. Strong hook in the first line\n"
     "2. One clear, valuable takeaway\n"
-    "3. Easy to skim — uses short paragraphs\n"
+    "3. Easy to skim - uses short paragraphs\n"
     "4. Roughly 150-200 words\n"
     "5. Ends with an engaging question or CTA\n"
     "6. Professional but human tone (not corporate-robotic)\n"
@@ -121,57 +169,56 @@ REVIEWER_SYSTEM_PROMPT = (
     "VERDICT: APPROVED or REJECTED\n"
     "FEEDBACK: <one short paragraph explaining why>\n\n"
     "Be strict but fair. Approve only if the post genuinely meets all "
-    "criteria. Reject if even one criterion is clearly missing.")
+    "criteria. Reject if even one criterion is clearly missing."
+)
 
 
 def reviewer_node(state: State) -> dict:
-    """Reviews the draft and decides: approve or reject with feedback."""
-    draft = state['draft']
+    """Draft review karta hai: approve ya feedback ke saath reject."""
+    draft = state["draft"]
 
-    prompt = (
-        f"Review this LinkedIn post draft : \n"
-        f"{draft}\n"
-        f"give your reviews"
-    )
+    prompt = f"Review this LinkedIn post draft:\n\n{draft}\n\nGive your review."
     response = reviewer_llm.invoke(
         [("system", REVIEWER_SYSTEM_PROMPT), ("human", prompt)]
     )
-    review_text = response.content.strip()
+    review_text = to_text(response.content).strip()
 
-    is_approved = "APPROVED" in review_text.upper().split("FEEDBACK")[0]
+    # Sirf VERDICT wali line dekho
+    verdict_line = ""
+    for line in review_text.splitlines():
+        if line.strip().upper().startswith("VERDICT"):
+            verdict_line = line.upper()
+            break
+    is_approved = "APPROVED" in verdict_line and "REJECTED" not in verdict_line
 
     if "FEEDBACK:" in review_text:
         feedback = review_text.split("FEEDBACK:", 1)[1].strip()
     else:
         feedback = review_text
 
-    return {
-        "review_feedback": feedback,
-        "is_approved": is_approved
-    }
+    return {"review_feedback": feedback, "is_approved": is_approved}
 
 
 # ----------------------------
 # Step 4 - Router functions
 # ----------------------------
 def should_use_tool(state: State):
-    last_message = state['messages'][-1]
-
-    if getattr(last_message, 'tool_calls', None):
+    last_message = state["messages"][-1]
+    if getattr(last_message, "tool_calls", None):
         return "tools"
     return "extract_draft"
 
 
 def should_stop_looping(state: State):
-    if state['is_approved']:
+    if state["is_approved"]:
         return END
-    if state['attempt'] >= 5:
+    if state["attempt"] >= MAX_ATTEMPTS:
         return END
     return "writer"
 
 
 # ----------------------------
-# Step 5 - Build the graph (cached)
+# Step 5 - Graph build (cached)
 # ----------------------------
 @st.cache_resource(show_spinner=False)
 def build_graph():
@@ -196,22 +243,12 @@ app = build_graph()
 # ----------------------------
 # Step 6 - Streamlit UI
 # ----------------------------
-
-# --- Custom CSS ---
-st.markdown("""
+st.markdown(
+    """
 <style>
-.main-header {
-    text-align: center;
-    padding: 1rem 0 0.5rem 0;
-}
-.main-header h1 {
-    font-size: 2.2rem;
-    margin-bottom: 0.2rem;
-}
-.main-header p {
-    color: #888;
-    font-size: 0.95rem;
-}
+.main-header { text-align: center; padding: 1rem 0 0.5rem 0; }
+.main-header h1 { font-size: 2.2rem; margin-bottom: 0.2rem; }
+.main-header p { color: #888; font-size: 0.95rem; }
 .post-card {
     border: 1px solid #333;
     border-radius: 14px;
@@ -231,14 +268,19 @@ st.markdown("""
 .badge-approved { background-color: #1f4a2e; color: #86efac; }
 .badge-maxed { background-color: #4a3110; color: #fcd34d; }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
-st.markdown("""
+st.markdown(
+    """
 <div class="main-header">
     <h1>✍️ LinkedIn Post Generator</h1>
     <p>AI writes a draft, reviews it, and iterates until it's publish-ready</p>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # --- Sidebar ---
 with st.sidebar:
@@ -246,18 +288,24 @@ with st.sidebar:
     st.caption("This tool runs a writer → reviewer loop:")
     st.caption("✍️ Writer drafts the post (searches the web if needed)")
     st.caption("🔎 Reviewer checks it against 7 quality criteria")
-    st.caption("🔁 Loops back with feedback until approved (max 5 attempts)")
+    st.caption(f"🔁 Loops with feedback until approved (max {MAX_ATTEMPTS} attempts)")
+    st.markdown("---")
+    st.caption(f"**Writer:** `{WRITER_MODEL}`")
+    st.caption(f"**Reviewer:** `{REVIEWER_MODEL}`")
     st.markdown("---")
     if st.button("🗑️ Clear History", use_container_width=True):
         st.session_state.history = []
         st.rerun()
 
-# --- Session state init ---
+# --- Session state ---
 if "history" not in st.session_state:
-    st.session_state.history = []  # list of {"topic", "draft", "attempt", "approved"}
+    st.session_state.history = []
 
-# --- Topic input ---
-topic = st.text_input("What topic do you want a LinkedIn post about?", placeholder="e.g. why AI agents are the next big shift in SaaS")
+# --- Input ---
+topic = st.text_input(
+    "What topic do you want a LinkedIn post about?",
+    placeholder="e.g. why AI agents are the next big shift in SaaS",
+)
 generate = st.button("🚀 Generate Post", use_container_width=True, type="primary")
 
 if generate:
@@ -273,29 +321,35 @@ if generate:
             "attempt": 0,
         }
 
-        with st.spinner("Writing, reviewing, and iterating..."):
-            final_state = app.invoke(initial_state)
+        try:
+            with st.spinner("Writing, reviewing, and iterating..."):
+                final_state = app.invoke(initial_state, {"recursion_limit": 50})
 
-        st.session_state.history.insert(0, {
-            "topic": topic.strip(),
-            "draft": final_state["draft"],
-            "attempt": final_state["attempt"],
-            "approved": final_state["is_approved"],
-            "feedback": final_state["review_feedback"],
-        })
+            st.session_state.history.insert(
+                0,
+                {
+                    "topic": topic.strip(),
+                    "draft": final_state["draft"],
+                    "attempt": final_state["attempt"],
+                    "approved": final_state["is_approved"],
+                    "feedback": final_state["review_feedback"],
+                },
+            )
+        except Exception as e:
+            st.error(f"Something went wrong: {e}")
 
-# --- Render results ---
-for item in st.session_state.history:
+# --- Results ---
+for i, item in enumerate(st.session_state.history):
     st.markdown("---")
     if item["approved"]:
         st.markdown(
             '<span class="status-badge badge-approved">✅ APPROVED</span>',
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
     else:
         st.markdown(
             '<span class="status-badge badge-maxed">⚠️ MAX ATTEMPTS REACHED</span>',
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
 
     st.caption(f"**Topic:** {item['topic']}  ·  **Attempts:** {item['attempt']}")
@@ -306,9 +360,9 @@ for item in st.session_state.history:
             st.write(item["feedback"])
 
     st.download_button(
-        "📋 Copy as .txt",
+        "📋 Download as .txt",
         data=item["draft"],
         file_name="linkedin_post.txt",
         mime="text/plain",
-        key=f"download_{item['topic']}_{item['attempt']}_{item['approved']}"
+        key=f"download_{len(st.session_state.history) - i}",
     )
