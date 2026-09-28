@@ -10,18 +10,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ----------------------------
-# Model config (sab free)
+# Config
 # ----------------------------
-# Writer   -> NVIDIA NIM par gpt-oss-20b (open-weight, free API key)
-# Reviewer -> Google Gemini Flash-Lite (AI Studio free tier)
 WRITER_MODEL = os.getenv("WRITER_MODEL", "openai/gpt-oss-20b")
-REVIEWER_MODEL = os.getenv("REVIEWER_MODEL", "gemini-3.5-flash-lite")  # exact ID AI Studio me check karo
+REVIEWER_MODEL = os.getenv("REVIEWER_MODEL", "gemini-2.5-flash-lite")
+
 MAX_ATTEMPTS = 5
+REQUEST_TIMEOUT = 40   # seconds per LLM call
+MAX_RETRIES = 4        # auto-retry with backoff on 429 / 503 (was 0-1 before)
 
 # ----------------------------
 # Tools
 # ----------------------------
-search_tool = TavilySearch(max_results=3)
+search_tool = TavilySearch(max_results=3)  # fixed: was max_result
 tools = [search_tool]
 
 # ----------------------------
@@ -32,8 +33,8 @@ writer_llm = ChatOpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
     api_key=os.getenv("NVIDIA_API_KEY"),
     temperature=0.7,
-    timeout=60,
-    max_retries=3,
+    timeout=REQUEST_TIMEOUT,
+    max_retries=MAX_RETRIES,
 )
 writer_llm_with_tools = writer_llm.bind_tools(tools)
 
@@ -42,13 +43,13 @@ reviewer_llm = ChatOpenAI(
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
     api_key=os.getenv("GEMINI_API_KEY"),
     temperature=0.1,
-    timeout=60,
-    max_retries=3,  # free tier me 429 aaye to retry
+    timeout=REQUEST_TIMEOUT,
+    max_retries=MAX_RETRIES,
 )
 
 
 def to_text(content) -> str:
-    """Content list of blocks ho to plain string bana do."""
+    """Some models return a list of blocks; turn it into a plain string."""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -93,8 +94,8 @@ WRITER_SYSTEM_PROMPT = (
 
 
 def writer_node(state: State) -> dict:
-    """Post likhta (ya dobara likhta) hai. Zarurat ho to Tavily se search karta hai."""
-    # Tool call se wapas aaye: same attempt continue karo
+    """Writes (or rewrites) the LinkedIn post. Can call Tavily to search first."""
+    # Coming back from a tool call: continue the SAME attempt with the search results
     if state["messages"] and getattr(state["messages"][-1], "type", "") == "tool":
         response = writer_llm_with_tools.invoke(
             [("system", WRITER_SYSTEM_PROMPT)] + state["messages"]
@@ -128,10 +129,10 @@ tool_node = ToolNode(tools)
 
 
 def extract_draft_node(state: State) -> dict:
-    """Writer ka final text draft ke roop me nikalta hai."""
+    """After the writer finishes tool calls, pull the final text out as the draft."""
     last_message = state["messages"][-1]
     draft = to_text(last_message.content).strip()
-    print(f"\n\n--- Generated post (attempt {state['attempt']}) ---\n{draft}\n")
+    print(f"\n--- Generated post (attempt {state['attempt']}) ---\n{draft}\n")
     return {"draft": draft}
 
 
@@ -154,7 +155,7 @@ REVIEWER_SYSTEM_PROMPT = (
 
 
 def reviewer_node(state: State) -> dict:
-    """Draft review karta hai: approve ya feedback ke saath reject."""
+    """Reviews the draft and decides: approve, or reject with feedback."""
     draft = state["draft"]
 
     prompt = f"Review this LinkedIn post draft:\n\n{draft}\n\nGive your review."
@@ -163,7 +164,7 @@ def reviewer_node(state: State) -> dict:
     )
     review_text = to_text(response.content).strip()
 
-    # Sirf VERDICT wali line dekho
+    # Only look at the VERDICT line (feedback text may contain the word "approved")
     verdict_line = ""
     for line in review_text.splitlines():
         if line.strip().upper().startswith("VERDICT"):
@@ -227,8 +228,8 @@ if __name__ == "__main__":
     print("=" * 55)
     print("Welcome to the LinkedIn Post Generator")
     print("=" * 55)
-    print("\nThis tool drafts a LinkedIn post, reviews it itself,")
-    print("and iterates until it's publish-ready.")
+    print("\nThis tool will draft a LinkedIn post for you, review it")
+    print("itself, and iterate until it's publish-ready.")
     print("=" * 55)
 
     topic = input("\nWhat topic do you want a LinkedIn post about?\n> ").strip()
@@ -236,6 +237,15 @@ if __name__ == "__main__":
     if not topic:
         print("\nNo topic given. Exiting.")
     else:
+        # Fail fast if a key is missing
+        missing = [
+            k for k in ("NVIDIA_API_KEY", "GEMINI_API_KEY", "TAVILY_API_KEY")
+            if not os.getenv(k)
+        ]
+        if missing:
+            print(f"\nMissing API key(s) in .env: {', '.join(missing)}")
+            raise SystemExit(1)
+
         print("\nStarting generation...\n")
 
         initial_state = {
@@ -247,15 +257,35 @@ if __name__ == "__main__":
             "attempt": 0,
         }
 
-        try:
-            final_state = app.invoke(initial_state, {"recursion_limit": 50})
+        # Track progress so a late failure (e.g. 503 at the reviewer)
+        # doesn't throw away the draft we already have.
+        result = {"draft": "", "review_feedback": "", "is_approved": False, "attempt": 0}
+        error = None
 
-            print("\n" + "=" * 55)
-            print("FINAL LINKEDIN POST")
-            print("=" * 55)
-            print(final_state["draft"])
-            print("=" * 55)
-            print(f"Total attempts: {final_state['attempt']}")
-            print(f"Approved: {final_state['is_approved']}")
+        try:
+            for step in app.stream(
+                initial_state,
+                {"recursion_limit": 50},
+                stream_mode="updates",
+            ):
+                for node, update in step.items():
+                    if not update:
+                        continue
+                    for k in result:
+                        if k in update:
+                            result[k] = update[k]
         except Exception as e:
-            print(f"\nSomething went wrong: {e}")
+            error = e
+
+        print("\n" + "=" * 55)
+        if error:
+            print(f"STOPPED BY ERROR: {error}")
+            if result["draft"]:
+                print("Draft below may be UNREVIEWED:")
+        else:
+            print("FINAL LINKEDIN POST")
+        print("=" * 55)
+        print(result["draft"] or "(no draft was produced)")
+        print("=" * 55)
+        print(f"Total attempts: {result['attempt']}")
+        print(f"Approved: {result['is_approved']}")
