@@ -18,7 +18,7 @@ load_dotenv()
 WRITER_MODEL = os.getenv("WRITER_MODEL", "openai/gpt-oss-20b")
 WRITER_BASE_URL = "https://integrate.api.nvidia.com/v1"
 
-REVIEWER_MODEL = os.getenv("REVIEWER_MODEL", "gemini-3.5-flash-lite")  # exact ID AI Studio me check karo
+REVIEWER_MODEL = os.getenv("REVIEWER_MODEL", "gemini-2.5-flash-lite")  # exact ID AI Studio me check karo
 REVIEWER_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 MAX_ATTEMPTS = 5
