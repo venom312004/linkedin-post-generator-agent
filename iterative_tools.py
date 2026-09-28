@@ -3,9 +3,8 @@ from typing import TypedDict,Annotated
 from langgraph.graph.message import add_messages
 from langgraph.graph import StateGraph,START,END
 from langgraph.prebuilt import ToolNode
-from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
 from langchain_tavily import TavilySearch
-from langchain_mistralai import ChatMistralAI
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -17,11 +16,10 @@ tools = [search_tool]
 
 # llm
 
-writer_llm = ChatMistralAI(model="mistral-small-2506",temperature=0.7,max_retries=5)
+writer_llm = ChatOpenAI(model="nvidia/nemotron-3-ultra-550b-a55b",base_url="https://integrate.api.nvidia.com/v1",api_key=os.getenv("NVIDIA_API_KEY"),temperature=0.7,timeout=30)
 writer_llm_with_tools = writer_llm.bind_tools(tools)
 
-reviewer_llm = ChatGroq(model="openai/gpt-oss-120b",temperature=0.1)
-
+reviewer_llm = ChatOpenAI(model="qwen/qwen3.8-27b:free",base_url="https://openrouter.ai/api/v1",api_key=os.getenv("OPENROUTER_API_KEY"),temperature=0.1,timeout=30)
 # state building 
 
 class State(TypedDict):
