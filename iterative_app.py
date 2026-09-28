@@ -13,15 +13,17 @@ load_dotenv()
 # ----------------------------
 # Model config (sab free)
 # ----------------------------
-# Writer  -> NVIDIA NIM par gpt-oss-20b (open-weight model, free API key)
+# Writer   -> NVIDIA NIM par gpt-oss-20b (open-weight, free API key)
 # Reviewer -> Google Gemini Flash-Lite (AI Studio free tier)
 WRITER_MODEL = os.getenv("WRITER_MODEL", "openai/gpt-oss-20b")
 WRITER_BASE_URL = "https://integrate.api.nvidia.com/v1"
 
-REVIEWER_MODEL = os.getenv("REVIEWER_MODEL", "gemini-3.5-flash-lite")  
+REVIEWER_MODEL = os.getenv("REVIEWER_MODEL", "gemini-3.5-flash-lite")  # exact ID AI Studio me check karo
 REVIEWER_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 MAX_ATTEMPTS = 5
+REQUEST_TIMEOUT = 40  # seconds per LLM call
+MAX_RETRIES = 1
 
 # ----------------------------
 # Page config
@@ -46,8 +48,8 @@ def load_resources():
         base_url=WRITER_BASE_URL,
         api_key=os.getenv("NVIDIA_API_KEY"),
         temperature=0.7,
-        timeout=60,
-        max_retries=3,
+        timeout=REQUEST_TIMEOUT,
+        max_retries=MAX_RETRIES,
     )
     writer_llm_with_tools = writer_llm.bind_tools(tools)
 
@@ -56,8 +58,8 @@ def load_resources():
         base_url=REVIEWER_BASE_URL,
         api_key=os.getenv("GEMINI_API_KEY"),
         temperature=0.1,
-        timeout=60,
-        max_retries=3,  # free tier me 429 aaye to retry
+        timeout=REQUEST_TIMEOUT,
+        max_retries=MAX_RETRIES,
     )
 
     return tools, writer_llm_with_tools, reviewer_llm
@@ -267,6 +269,7 @@ st.markdown(
 }
 .badge-approved { background-color: #1f4a2e; color: #86efac; }
 .badge-maxed { background-color: #4a3110; color: #fcd34d; }
+.badge-unreviewed { background-color: #3a1f1f; color: #fca5a5; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -312,31 +315,71 @@ if generate:
     if not topic.strip():
         st.warning("Please enter a topic first.")
     else:
-        initial_state = {
-            "topic": topic.strip(),
-            "messages": [],
+        # Missing keys ka jaldi pata chale
+        missing = [
+            k for k in ("NVIDIA_API_KEY", "GEMINI_API_KEY", "TAVILY_API_KEY")
+            if not os.getenv(k)
+        ]
+        if missing:
+            st.error(f"Missing API key(s): {', '.join(missing)}. Add them in .env or Streamlit Secrets.")
+            st.stop()
+
+        result = {
             "draft": "",
             "review_feedback": "",
             "is_approved": False,
             "attempt": 0,
         }
+        initial_state = {"topic": topic.strip(), "messages": [], **result}
+
+        status = st.status("Starting...", expanded=True)
+        failed_error = None
 
         try:
-            with st.spinner("Writing, reviewing, and iterating..."):
-                final_state = app.invoke(initial_state, {"recursion_limit": 50})
+            for step in app.stream(
+                initial_state,
+                {"recursion_limit": 40},
+                stream_mode="updates",
+            ):
+                for node, update in step.items():
+                    if node == "writer":
+                        attempt_no = update.get("attempt")
+                        if attempt_no:
+                            status.write(f"✍️ Writer drafting (attempt {attempt_no})...")
+                        else:
+                            status.write("✍️ Writer continuing with search results...")
+                    elif node == "tools":
+                        status.write("🔍 Web search done")
+                    elif node == "extract_draft":
+                        status.write("📝 Draft ready, sending to reviewer...")
+                    elif node == "reviewer":
+                        verdict = "APPROVED ✅" if update.get("is_approved") else "REJECTED ❌"
+                        status.write(f"🔎 Reviewer: {verdict}")
 
+                    for k in ("draft", "review_feedback", "is_approved", "attempt"):
+                        if update and k in update:
+                            result[k] = update[k]
+
+            status.update(label="Done", state="complete", expanded=False)
+        except Exception as e:
+            failed_error = e
+            status.update(label="Stopped due to an error", state="error", expanded=True)
+            st.error(f"Something went wrong: {e}")
+
+        # Draft mil gaya ho to (review fail hone par bhi) dikhao
+        if result["draft"]:
             st.session_state.history.insert(
                 0,
                 {
                     "topic": topic.strip(),
-                    "draft": final_state["draft"],
-                    "attempt": final_state["attempt"],
-                    "approved": final_state["is_approved"],
-                    "feedback": final_state["review_feedback"],
+                    "draft": result["draft"],
+                    "attempt": result["attempt"],
+                    "approved": result["is_approved"],
+                    "unreviewed": failed_error is not None,
+                    "feedback": result["review_feedback"]
+                    or (str(failed_error) if failed_error else ""),
                 },
             )
-        except Exception as e:
-            st.error(f"Something went wrong: {e}")
 
 # --- Results ---
 for i, item in enumerate(st.session_state.history):
@@ -344,6 +387,11 @@ for i, item in enumerate(st.session_state.history):
     if item["approved"]:
         st.markdown(
             '<span class="status-badge badge-approved">✅ APPROVED</span>',
+            unsafe_allow_html=True,
+        )
+    elif item.get("unreviewed"):
+        st.markdown(
+            '<span class="status-badge badge-unreviewed">⚠️ STOPPED BY ERROR (draft may be unreviewed)</span>',
             unsafe_allow_html=True,
         )
     else:
@@ -356,7 +404,7 @@ for i, item in enumerate(st.session_state.history):
     st.markdown(f'<div class="post-card">{item["draft"]}</div>', unsafe_allow_html=True)
 
     if not item["approved"]:
-        with st.expander("Last reviewer feedback"):
+        with st.expander("Last reviewer feedback / error"):
             st.write(item["feedback"])
 
     st.download_button(
