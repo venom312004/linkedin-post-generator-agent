@@ -71,7 +71,7 @@ The whole thing is a small state graph:
 |---|---|
 | Orchestration | [LangGraph](https://github.com/langchain-ai/langgraph) |
 | Writer LLM | NVIDIA NIM (`nvidia/nemotron-3-ultra-550b-a55b`) via `langchain-openai` (OpenAI-compatible endpoint) |
-| Reviewer LLM | OpenRouter (`nvidia/nemotron-3-ultra-550b-a55b:free`) via `langchain-openai` |
+| Reviewer LLM | Qwen (qwen/qwen3.8-27b:free) via OpenRouter and langchain-openai |
 | Web search | [Tavily](https://tavily.com/) via `langchain-tavily` |
 | UI | [Streamlit](https://streamlit.io/) |
 | Env management | `python-dotenv` |
