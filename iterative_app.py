@@ -27,7 +27,7 @@ def load_resources():
     search_tool = TavilySearch(max_result=3)
     tools = [search_tool]
 
-    writer_llm = ChatOpenAI(model="nvidia/nemotron-3-ultra-550b-a55b", base_url="https://integrate.api.nvidia.com/v1", api_key=os.getenv("NVIDIA_API_KEY"), temperature=0.7, timeout=30)
+    writer_llm = ChatOpenAI(model="openai/gpt-oss-20b", base_url="https://integrate.api.nvidia.com/v1", api_key=os.getenv("NVIDIA_API_KEY"), temperature=0.7, timeout=30)
     writer_llm_with_tools = writer_llm.bind_tools(tools)
 
     reviewer_llm = ChatOpenAI(model="qwen/qwen3.8-27b:free", base_url="https://openrouter.ai/api/v1", api_key=os.getenv("OPENROUTER_API_KEY"), temperature=0.1, timeout=30)
@@ -69,6 +69,11 @@ writer_system_prompt = (
 
 def writer_node(state: State) -> dict:
     """Writes (or rewrites) the LinkedIn post. Can call Tavily to search first."""
+    # coming back from a tool call: continue the SAME attempt using the search results
+    if state['messages'] and getattr(state['messages'][-1], 'type', '') == 'tool':
+        response = writer_llm_with_tools.invoke([("system", writer_system_prompt)] + state['messages'])
+        return {"messages": [response]}
+
     attempt = state.get("attempt", 0) + 1
     topic = state['topic']
     previous_feedback = state['review_feedback']
