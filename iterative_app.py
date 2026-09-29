@@ -15,7 +15,7 @@ load_dotenv()
 # ----------------------------
 # Writer   -> NVIDIA NIM par gpt-oss-20b (open-weight, free API key)
 # Reviewer -> Google Gemini Flash-Lite (AI Studio free tier)
-WRITER_MODEL = os.getenv("WRITER_MODEL", "openai/gpt-oss-20b")
+WRITER_MODEL = os.getenv("WRITER_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
 WRITER_BASE_URL = "https://integrate.api.nvidia.com/v1"
 
 REVIEWER_MODEL = os.getenv("REVIEWER_MODEL", "gemini-2.5-flash-lite")  # exact ID AI Studio me check karo
