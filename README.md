@@ -2,7 +2,7 @@
 
 An autonomous **writer → reviewer agent loop** that drafts LinkedIn posts, critiques its own work, and keeps rewriting until the post is genuinely publish-ready — or gives up after 5 honest attempts.
 
-Built with **LangGraph**, powered by **NVIDIA NIM / GPT-OSS 20B** (writer) + **Gemini Flash-Lite via Google AI Studio** (reviewer), with live web search via **Tavily**. Every model used runs on a free tier. Ships as both a **Streamlit app** and a **CLI script**.
+Built with **LangGraph**, powered by **NVIDIA NIM / Nemotron 3 Ultra** (writer) + **Gemini Flash-Lite via Google AI Studio** (reviewer), with live web search via **Tavily**. Every model used runs on a free tier. Ships as both a **Streamlit app** and a **CLI script**.
 
 
 🔗 **Live Demo:** [linkedin-post-generator-agent-pranjal-003.streamlit.app](https://linkedin-post-generator-agent-pranjal-003.streamlit.app/)
@@ -35,8 +35,8 @@ The whole thing is a small state graph:
          END
 ```
 
-1. **Writer** (`openai/gpt-oss-20b` via NVIDIA NIM) drafts a post from the topic. If the topic needs current facts or stats, it calls the **Tavily search tool** before writing.
-2. **Reviewer** (`gemini-3.5-flash-lite` via Google AI Studio) grades the draft against 7 strict criteria and returns `APPROVED` or `REJECTED` with feedback.
+1. **Writer** (`nvidia/nemotron-3-ultra-550b-a55b` via NVIDIA NIM) drafts a post from the topic. If the topic needs current facts or stats, it calls the **Tavily search tool** before writing.
+2. **Reviewer** (`gemini-2.5-flash-lite` via Google AI Studio) grades the draft against 7 strict criteria and returns `APPROVED` or `REJECTED` with feedback.
 3. If rejected, the **feedback is fed straight back to the writer**, which rewrites the post addressing every point.
 4. This loop repeats until the post is approved **or** 5 attempts are used up, whichever comes first.
 
@@ -57,7 +57,7 @@ The whole thing is a small state graph:
 
 - **Self-correcting agent loop** — no human in the loop needed, the model reviews itself
 - **Live web search** grounding for topics that need current data (Tavily)
-- **Two-model setup** — a creative writer model (GPT-OSS 20B) and a separate, strict reviewer model (Gemini), so the same LLM isn't grading its own homework
+- **Two-model setup** — a creative writer model (Nemotron 3 Ultra) and a separate, strict reviewer model (Gemini), so the same LLM isn't grading its own homework
 - **100% free-tier friendly** — NVIDIA NIM, Google AI Studio and Tavily all offer free plans
 - **Swappable models** — change `WRITER_MODEL` / `REVIEWER_MODEL` in `.env` without touching the code
 - **Hard attempt cap (5)** to avoid infinite loops and runaway API usage
@@ -72,8 +72,8 @@ The whole thing is a small state graph:
 | Layer | Tool |
 |---|---|
 | Orchestration | [LangGraph](https://github.com/langchain-ai/langgraph) |
-| Writer LLM | NVIDIA NIM (`openai/gpt-oss-20b`) via `langchain-openai` (OpenAI-compatible endpoint) |
-| Reviewer LLM | Gemini Flash-Lite (`gemini-3.5-flash-lite`) via Google AI Studio's OpenAI-compatible endpoint and `langchain-openai` |
+| Writer LLM | NVIDIA NIM (`nvidia/nemotron-3-ultra-550b-a55b`) via `langchain-openai` (OpenAI-compatible endpoint) |
+| Reviewer LLM | Gemini Flash-Lite (`gemini-2.5-flash-lite`) via Google AI Studio's OpenAI-compatible endpoint and `langchain-openai` |
 | Web search | [Tavily](https://tavily.com/) via `langchain-tavily` |
 | UI | [Streamlit](https://streamlit.io/) |
 | Env management | `python-dotenv` |
@@ -102,8 +102,8 @@ GEMINI_API_KEY=your_google_ai_studio_key
 TAVILY_API_KEY=your_tavily_api_key
 
 # Optional: override the default models
-# WRITER_MODEL=openai/gpt-oss-20b
-# REVIEWER_MODEL=gemini-3.5-flash-lite
+# WRITER_MODEL=nvidia/nemotron-3-ultra-550b-a55b
+# REVIEWER_MODEL=gemini-2.5-flash-lite
 ```
 
 > Get keys from [NVIDIA Build](https://build.nvidia.com/), [Google AI Studio](https://aistudio.google.com/apikey), and [Tavily](https://app.tavily.com/).
@@ -112,7 +112,7 @@ TAVILY_API_KEY=your_tavily_api_key
 
 ### Deploying on Streamlit Community Cloud
 
-Add the same three keys (`NVIDIA_API_KEY`, `GEMINI_API_KEY`, `TAVILY_API_KEY`) under **App settings → Secrets**. Remove the old `OPENROUTER_API_KEY` if you no longer use it.
+Add the same three keys (`NVIDIA_API_KEY`, `GEMINI_API_KEY`, `TAVILY_API_KEY`) under **App settings → Secrets**. Remove any old `GROQ_API_KEY`, `MISTRAL_API_KEY`, or `OPENROUTER_API_KEY` entries if you no longer use them.
 
 ---
 
