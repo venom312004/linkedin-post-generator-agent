@@ -12,7 +12,7 @@ load_dotenv()
 # ----------------------------
 # Config
 # ----------------------------
-WRITER_MODEL = os.getenv("WRITER_MODEL", "openai/gpt-oss-20b")
+WRITER_MODEL = os.getenv("WRITER_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
 REVIEWER_MODEL = os.getenv("REVIEWER_MODEL", "gemini-2.5-flash-lite")
 
 MAX_ATTEMPTS = 5
